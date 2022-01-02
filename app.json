@@ -1,0 +1,16 @@
+{
+    "id": "78ed381b-4ef0-4b15-a2cf-618e43dbece5",
+    "version": "0.0.1",
+    "requiredApiVersion": "^1.19.0",
+    "iconFile": "icon.png",
+    "author": {
+        "name": "Debdut Chakraborty",
+        "homepage": "https://github.com/debdutdeb/rocket.chat.apps.discuss",
+        "support": "n/a"
+    },
+    "name": "Discuss",
+    "nameSlug": "discuss",
+    "classFile": "DiscussApp.ts",
+    "description": "Create discussions",
+    "implements": []
+}
