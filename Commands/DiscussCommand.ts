@@ -56,11 +56,8 @@ export class DiscussCommand implements ISlashCommand {
         await this.startDiscussionFromCLI(argString)
     }
 
-    private readonly roomDiscussionOrDirect = (room?: IRoom): boolean =>
-        room?.type === 'd' ||
-        !!room?.parentRoom ||
-        this.contextRoom?.type === 'd' ||
-        !!this.contextRoom?.parentRoom
+    private readonly roomDiscussionOrDirect = (room: IRoom): boolean =>
+        room.type === 'd' || !!room.parentRoom
 
     private async notify(text: string): Promise<void> {
         await this.notifier.notifyUser(this.commandSender, {
@@ -113,6 +110,7 @@ export class DiscussCommand implements ISlashCommand {
             threadMessage?.sender.id === this.commandSender.id
                 ? []
                 : [threadMessage?.sender.id as string],
+            // expected this to work, but isn't, leaving it here so that I can be sad about it
             {pmid: threadId}
         )
 
@@ -137,6 +135,7 @@ export class DiscussCommand implements ISlashCommand {
     }
 
     private async startDiscussionFromCLI(argString: string): Promise<void> {
+        // it'll never return null since all regex matches are optional
         const [, , roomName, discussionName]: Array<string> =
             /(^#([^\s]+)\s*)?(.+)?$/.exec(argString) as RegExpExecArray
 
@@ -154,10 +153,11 @@ export class DiscussCommand implements ISlashCommand {
         if (this.roomDiscussionOrDirect(room)) {
             return await this.notify(
                 `${
+                    /* means this room is where command's been run */
                     room.id === this.contextRoom.id
-                        ? `room \`${roomName}\``
-                        : 'this room'
-                } isn't public channel or private group, either pass a different \`#RoomName\` or execute \`/discuss\` in another room `
+                        ? 'this room'
+                        : `\`${room.displayName ?? room.slugifiedName}\``
+                } isn't a public channel or private group, either pass a different \`#RoomName\` or execute \`/discuss\` in another room `
             )
         }
 
