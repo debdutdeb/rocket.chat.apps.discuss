@@ -1,0 +1,4 @@
+{
+    "Params": "[#channel] [discussion name]",
+    "Description": "Create discussions with a slashcommand"
+}

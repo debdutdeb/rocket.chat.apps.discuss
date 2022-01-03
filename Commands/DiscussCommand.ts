@@ -16,8 +16,8 @@ import {IUser} from '@rocket.chat/apps-engine/definition/users'
 
 export class DiscussCommand implements ISlashCommand {
     public command: string = 'discuss'
-    public i18nDescription: string = 'Create discussions using slashcommand'
-    public i18nParamsExample: string = '[#channel] [discussion]'
+    public i18nDescription: string = 'Description'
+    public i18nParamsExample: string = 'Params'
     public providesPreview: boolean = false
 
     private contextRoom: IRoom
