@@ -59,11 +59,12 @@ export class DiscussCommand implements ISlashCommand {
     private readonly roomDiscussionOrDirect = (room: IRoom): boolean =>
         room.type === 'd' || !!room.parentRoom
 
-    private async notify(text: string): Promise<void> {
+    private async notify(text: string, threadId?: string): Promise<void> {
         await this.notifier.notifyUser(this.commandSender, {
             sender: this.me,
             room: this.contextRoom,
-            attachments: [{color: 'red', text}]
+            attachments: [{color: 'red', text}],
+            threadId
         })
     }
 
@@ -107,6 +108,13 @@ export class DiscussCommand implements ISlashCommand {
             .getMessageReader()
             .getById(threadId)
 
+        if (!threadMessage?.text && !discussionName) {
+            return await this.notify(
+                'no thread message text found to use as discussion name, please provide one',
+                threadId
+            )
+        }
+
         const discussionId = await this.startDiscussion(
             discussionName || (threadMessage?.text as string),
             this.contextRoom,
@@ -131,9 +139,11 @@ export class DiscussCommand implements ISlashCommand {
                         .getRoomReader()
                         .getById(discussionId)) as IRoom
                 )
-                .setAttachments([
-                    {color: 'green', text: threadMessage?.text as string}
-                ])
+                .setAttachments(
+                    threadMessage?.attachments || [
+                        {color: 'green', text: threadMessage?.text as string}
+                    ]
+                )
         )
     }
 
