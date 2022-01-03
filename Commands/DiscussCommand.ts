@@ -70,22 +70,25 @@ export class DiscussCommand implements ISlashCommand {
     private async startDiscussion(
         displayName: string,
         parentRoom: IRoom,
-        userIds?: Array<string>,
+        users?: Array<IUser>,
         customFields?: {[K: string]: any}
     ): Promise<string> {
         const slugify = (str?: string): string | undefined =>
             str?.toLowerCase().replace(/[^a-zA-Z0-9\_\-\.]/g, '')
 
         return await this.creator.finish(
-            this.creator.startDiscussion({
-                creator: this.commandSender,
-                displayName,
-                slugifiedName: slugify(displayName),
-                parentRoom,
-                type: RoomType.CHANNEL,
-                userIds,
-                customFields
-            })
+            this.creator
+                .startDiscussion({
+                    creator: this.commandSender,
+                    displayName,
+                    slugifiedName: slugify(displayName),
+                    parentRoom,
+                    type: RoomType.CHANNEL,
+                    customFields
+                })
+                .setMembersToBeAddedByUsernames(
+                    users?.map((user: IUser): string => user.username) || []
+                )
         )
     }
 
@@ -109,7 +112,7 @@ export class DiscussCommand implements ISlashCommand {
             this.contextRoom,
             threadMessage?.sender.id === this.commandSender.id
                 ? []
-                : [threadMessage?.sender.id as string],
+                : [threadMessage?.sender as IUser],
             // expected this to work, but isn't, leaving it here so that I can be sad about it
             {pmid: threadId}
         )
