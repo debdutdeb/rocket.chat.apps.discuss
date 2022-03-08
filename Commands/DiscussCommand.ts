@@ -141,13 +141,15 @@ export class DiscussCommand implements ISlashCommand {
         if (discussion) {
             // gotcha mafrand
             // FIXME: can't do this unfortunately :(
-            /* await this.creator.finish(
-             *     (
-             *         await this.modify
-             *             .getUpdater()
-             *             .room(discussion.id, this.commandSender)
-             *     ).addMemberToBeAddedByUsername(this.commandSender.username)
-             * ) */
+            await this.modify
+                .getUpdater()
+                .finish(
+                    (
+                        await this.modify
+                            .getUpdater()
+                            .room(discussion.id, this.commandSender)
+                    ).addMemberToBeAddedByUsername(this.commandSender.username)
+                )
 
             // so i'll just notify about the new thingy
             return await this.notify(
