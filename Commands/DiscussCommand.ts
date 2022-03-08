@@ -7,12 +7,17 @@ import {
     IRead
 } from '@rocket.chat/apps-engine/definition/accessors'
 import {App} from '@rocket.chat/apps-engine/definition/App'
+import {
+    RocketChatAssociationModel,
+    RocketChatAssociationRecord
+} from '@rocket.chat/apps-engine/definition/metadata'
 import {IRoom, RoomType} from '@rocket.chat/apps-engine/definition/rooms'
 import {
     ISlashCommand,
     SlashCommandContext
 } from '@rocket.chat/apps-engine/definition/slashcommands'
 import {IUser} from '@rocket.chat/apps-engine/definition/users'
+import {IDiscussionWithThreadId} from '../Models/IDiscussionWithThreadId'
 
 export class DiscussCommand implements ISlashCommand {
     public command: string = 'discuss'
@@ -24,8 +29,11 @@ export class DiscussCommand implements ISlashCommand {
     private commandSender: IUser
     private me: IUser
     private notifier: INotifier
+    private modify: IModify
     private creator: IModifyCreator
     private read: IRead
+    private persis: IPersistence
+    private record: RocketChatAssociationRecord
 
     constructor(private readonly app: App) {
         this.app = app
@@ -40,10 +48,16 @@ export class DiscussCommand implements ISlashCommand {
     ): Promise<void> {
         this.contextRoom = context.getRoom()
         this.commandSender = context.getSender()
+        this.modify = modify
         this.notifier = modify.getNotifier()
         this.creator = modify.getCreator()
+        this.persis = persis
         this.me = (await read.getUserReader().getAppUser()) as IUser
         this.read = read
+        this.record = new RocketChatAssociationRecord(
+            RocketChatAssociationModel.MISC,
+            'thread-discussion-map'
+        )
 
         const threadId = context.getThreadId()
 
@@ -104,6 +118,14 @@ export class DiscussCommand implements ISlashCommand {
         return
     }
 
+    private async getDiscussionUrl(discussion: IRoom): Promise<string> {
+        const siteUrl = (await this.read
+            .getEnvironmentReader()
+            .getServerSettings()
+            .getValueById('Site_Url')) as string
+        return `${siteUrl.replace(/\/$/, '')}/channel/${discussion.id}`
+    }
+
     private async startDiscussionFromThread(
         threadId: string,
         discussionName?: string
@@ -112,6 +134,26 @@ export class DiscussCommand implements ISlashCommand {
             return await this.notify(
                 // tslint:disable-next-line: quotemark
                 "this room isn't public channel or private group, either pass a `#RoomName` or execute `/discuss` in a different room"
+            )
+        }
+
+        const discussion = await this.findDiscussionByThread(threadId)
+        if (discussion) {
+            // gotcha mafrand
+            // FIXME: can't do this unfortunately :(
+            /* await this.creator.finish(
+             *     (
+             *         await this.modify
+             *             .getUpdater()
+             *             .room(discussion.id, this.commandSender)
+             *     ).addMemberToBeAddedByUsername(this.commandSender.username)
+             * ) */
+
+            // so i'll just notify about the new thingy
+            return await this.notify(
+                `A discussion already exists, please join [here](${await this.getDiscussionUrl(
+                    discussion
+                )}).`
             )
         }
 
@@ -160,6 +202,12 @@ export class DiscussCommand implements ISlashCommand {
                     ]
                 )
         )
+
+        const room = (await this.read
+            .getRoomReader()
+            .getById(discussionId)) as IRoom
+
+        await this.persis.updateByAssociation(this.record, {...room, threadId})
     }
 
     private async doIBelong(room: IRoom): Promise<boolean> {
@@ -201,5 +249,18 @@ export class DiscussCommand implements ISlashCommand {
         }
 
         await this.startDiscussion(discussionName, room)
+    }
+
+    private async findDiscussionByThread(
+        threadId: string
+    ): Promise<IDiscussionWithThreadId | undefined> {
+        // do stuff
+        const data = await this.read
+            .getPersistenceReader()
+            .readByAssociation(this.record)
+
+        return data.find(
+            room => (room as IDiscussionWithThreadId).threadId === threadId
+        ) as IDiscussionWithThreadId | undefined
     }
 }
