@@ -56,11 +56,12 @@ export class DiscussCommand implements ISlashCommand {
         await this.startDiscussionFromCLI(argString)
     }
 
-    private readonly roomDiscussionOrDirect = (room: IRoom): boolean =>
-        room.type === 'd' || !!room.parentRoom
+    private readonly isRoomDiscussion = (room: IRoom): boolean =>
+        Boolean(room.parentRoom)
 
     private async notify(text: string, threadId?: string): Promise<void> {
         await this.notifier.notifyUser(this.commandSender, {
+            emoji: ':cloud:',
             sender: this.me,
             room: this.contextRoom,
             attachments: [{color: 'red', text}],
@@ -73,31 +74,41 @@ export class DiscussCommand implements ISlashCommand {
         parentRoom: IRoom,
         users?: Array<IUser>,
         customFields?: {[K: string]: any}
-    ): Promise<string> {
+    ): Promise<string | undefined> {
+        // TODO: change this
         const slugify = (str?: string): string | undefined =>
             str?.toLowerCase().replace(/[^a-zA-Z0-9\_\-\.]/g, '')
 
-        return await this.creator.finish(
-            this.creator
-                .startDiscussion({
-                    creator: this.commandSender,
-                    displayName,
-                    slugifiedName: slugify(displayName),
-                    parentRoom,
-                    type: RoomType.CHANNEL,
-                    customFields
-                })
-                .setMembersToBeAddedByUsernames(
-                    users?.map((user: IUser): string => user.username) || []
-                )
-        )
+        try {
+            return await this.creator.finish(
+                this.creator
+                    .startDiscussion({
+                        creator: this.commandSender,
+                        displayName,
+                        slugifiedName: slugify(displayName),
+                        parentRoom,
+                        type: RoomType.CHANNEL,
+                        customFields
+                    })
+                    .setMembersToBeAddedByUsernames(
+                        users?.map((user: IUser): string => user.username) || []
+                    )
+            )
+        } catch (e) {
+            if (e.error === 'error-action-not-allowed') {
+                await this.notify(e.reason)
+                return
+            }
+            this.app.getLogger().error(e)
+        }
+        return
     }
 
     private async startDiscussionFromThread(
         threadId: string,
         discussionName?: string
     ): Promise<void> {
-        if (this.roomDiscussionOrDirect(this.contextRoom)) {
+        if (this.isRoomDiscussion(this.contextRoom)) {
             return await this.notify(
                 // tslint:disable-next-line: quotemark
                 "this room isn't public channel or private group, either pass a `#RoomName` or execute `/discuss` in a different room"
@@ -125,6 +136,10 @@ export class DiscussCommand implements ISlashCommand {
             {pmid: threadId}
         )
 
+        if (!discussionId) {
+            return
+        }
+
         // since {pmid: any} isn't working
         // the first message in a discussion created from a thread
         // will be by the thread creator, and the thread message
@@ -147,6 +162,11 @@ export class DiscussCommand implements ISlashCommand {
         )
     }
 
+    private async doIBelong(room: IRoom): Promise<boolean> {
+        const members = await this.read.getRoomReader().getMembers(room.id)
+        return members.map(member => member.id).includes(this.commandSender.id)
+    }
+
     private async startDiscussionFromCLI(argString: string): Promise<void> {
         // it'll never return null since all regex matches are optional
         const [, , roomName, discussionName]: Array<string> =
@@ -163,7 +183,13 @@ export class DiscussCommand implements ISlashCommand {
             return await this.notify(`room \`${roomName}\` not found`)
         }
 
-        if (this.roomDiscussionOrDirect(room)) {
+        if (!(await this.doIBelong(room))) {
+            return await this.notify(
+                'You are not a member of said room: ' + room.displayName
+            )
+        }
+
+        if (this.isRoomDiscussion(room)) {
             return await this.notify(
                 `${
                     /* means this room is where command's been run */
