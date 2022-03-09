@@ -17,7 +17,6 @@ import {
     SlashCommandContext
 } from '@rocket.chat/apps-engine/definition/slashcommands'
 import {IUser} from '@rocket.chat/apps-engine/definition/users'
-import {IDiscussionWithThreadId} from '../Models/IDiscussionWithThreadId'
 
 export class DiscussCommand implements ISlashCommand {
     public command: string = 'discuss'
@@ -55,7 +54,7 @@ export class DiscussCommand implements ISlashCommand {
         this.me = (await read.getUserReader().getAppUser()) as IUser
         this.read = read
         this.record = new RocketChatAssociationRecord(
-            RocketChatAssociationModel.MISC,
+            RocketChatAssociationModel.ROOM,
             'thread-discussion-map'
         )
 
@@ -64,6 +63,10 @@ export class DiscussCommand implements ISlashCommand {
         const argString = context.getArguments().join(' ')
 
         if (threadId) {
+            const discussion = await this.findDiscussionByThreadId(threadId)
+            if (discussion) {
+                return await this.joinDiscussion(discussion)
+            }
             return await this.startDiscussionFromThread(threadId, argString)
         }
 
@@ -83,6 +86,20 @@ export class DiscussCommand implements ISlashCommand {
         })
     }
 
+    private async joinDiscussion(discussion: IRoom): Promise<void> {
+        const updater = this.modify.getUpdater()
+        await updater.finish(
+            (
+                await updater.room(discussion.id, this.commandSender)
+            ).addMemberToBeAddedByUsername(this.commandSender.username)
+        )
+
+        await this.notify(
+            `A discussion already exists, please join [here](${await this.getDiscussionUrl(
+                discussion
+            )}).`
+        )
+    }
     private async startDiscussion(
         displayName: string,
         parentRoom: IRoom,
@@ -137,28 +154,6 @@ export class DiscussCommand implements ISlashCommand {
             )
         }
 
-        const discussion = await this.findDiscussionByThread(threadId)
-        if (discussion) {
-            // gotcha mafrand
-            // FIXME: can't do this unfortunately :(
-            await this.modify
-                .getUpdater()
-                .finish(
-                    (
-                        await this.modify
-                            .getUpdater()
-                            .room(discussion.id, this.commandSender)
-                    ).addMemberToBeAddedByUsername(this.commandSender.username)
-                )
-
-            // so i'll just notify about the new thingy
-            return await this.notify(
-                `A discussion already exists, please join [here](${await this.getDiscussionUrl(
-                    discussion
-                )}).`
-            )
-        }
-
         const threadMessage = await this.read
             .getMessageReader()
             .getById(threadId)
@@ -209,10 +204,14 @@ export class DiscussCommand implements ISlashCommand {
             .getRoomReader()
             .getById(discussionId)) as IRoom
 
-        await this.persis.updateByAssociation(this.record, {...room, threadId})
+        await this.persis.updateByAssociation(
+            this.record,
+            {...room, pmid: threadId},
+            true
+        )
     }
 
-    private async doIBelong(room: IRoom): Promise<boolean> {
+    private async isSenderMember(room: IRoom): Promise<boolean> {
         const members = await this.read.getRoomReader().getMembers(room.id)
         return members.map(member => member.id).includes(this.commandSender.id)
     }
@@ -233,7 +232,7 @@ export class DiscussCommand implements ISlashCommand {
             return await this.notify(`room \`${roomName}\` not found`)
         }
 
-        if (!(await this.doIBelong(room))) {
+        if (!(await this.isSenderMember(room))) {
             return await this.notify(
                 'You are not a member of said room: ' + room.displayName
             )
@@ -253,16 +252,20 @@ export class DiscussCommand implements ISlashCommand {
         await this.startDiscussion(discussionName, room)
     }
 
-    private async findDiscussionByThread(
+    private async findDiscussionByThreadId(
         threadId: string
-    ): Promise<IDiscussionWithThreadId | undefined> {
-        // do stuff
+    ): Promise<IRoom | undefined> {
         const data = await this.read
             .getPersistenceReader()
             .readByAssociation(this.record)
 
+        /**
+         * pmid is actually a property of the room::discussion model
+         * just not yet available in apps-engine
+         * so doing it this way
+         */
         return data.find(
-            room => (room as IDiscussionWithThreadId).threadId === threadId
-        ) as IDiscussionWithThreadId | undefined
+            room => (room as IRoom & {pmid: string}).pmid === threadId
+        ) as IRoom | undefined
     }
 }
