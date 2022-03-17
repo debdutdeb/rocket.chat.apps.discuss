@@ -11,6 +11,6 @@
     "name": "Discuss",
     "nameSlug": "discuss",
     "classFile": "DiscussApp.ts",
-    "description": "Create discussions",
+    "description": "Create discussions using a slash command",
     "implements": []
 }

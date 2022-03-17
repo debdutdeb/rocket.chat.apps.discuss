@@ -6,7 +6,6 @@ import {
     IPersistence,
     IRead
 } from '@rocket.chat/apps-engine/definition/accessors'
-import {App} from '@rocket.chat/apps-engine/definition/App'
 import {IMessage} from '@rocket.chat/apps-engine/definition/messages'
 import {
     RocketChatAssociationModel,
@@ -18,6 +17,7 @@ import {
     SlashCommandContext
 } from '@rocket.chat/apps-engine/definition/slashcommands'
 import {IUser} from '@rocket.chat/apps-engine/definition/users'
+import {DiscussApp} from '../DiscussApp'
 
 export class DiscussCommand implements ISlashCommand {
     public command: string = 'discuss'
@@ -27,7 +27,6 @@ export class DiscussCommand implements ISlashCommand {
 
     private contextRoom: IRoom
     private commandSender: IUser
-    private me: IUser
     private notifier: INotifier
     private modify: IModify
     private creator: IModifyCreator
@@ -35,7 +34,7 @@ export class DiscussCommand implements ISlashCommand {
     private persis: IPersistence
     private record: RocketChatAssociationRecord
 
-    constructor(private readonly app: App) {
+    constructor(private readonly app: DiscussApp) {
         this.app = app
     }
 
@@ -52,7 +51,6 @@ export class DiscussCommand implements ISlashCommand {
         this.notifier = modify.getNotifier()
         this.creator = modify.getCreator()
         this.persis = persis
-        this.me = (await read.getUserReader().getAppUser()) as IUser
         this.read = read
         this.record = new RocketChatAssociationRecord(
             RocketChatAssociationModel.ROOM,
@@ -80,7 +78,7 @@ export class DiscussCommand implements ISlashCommand {
     private async notify(text: string, threadId?: string): Promise<void> {
         await this.notifier.notifyUser(this.commandSender, {
             emoji: ':cloud:',
-            sender: this.me,
+            sender: this.app.me,
             room: this.contextRoom,
             attachments: [{color: 'red', text}],
             threadId
