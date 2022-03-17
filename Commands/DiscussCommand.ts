@@ -7,6 +7,7 @@ import {
     IRead
 } from '@rocket.chat/apps-engine/definition/accessors'
 import {App} from '@rocket.chat/apps-engine/definition/App'
+import {IMessage} from '@rocket.chat/apps-engine/definition/messages'
 import {
     RocketChatAssociationModel,
     RocketChatAssociationRecord
@@ -65,7 +66,7 @@ export class DiscussCommand implements ISlashCommand {
         if (threadId) {
             const discussion = await this.findDiscussionByThreadId(threadId)
             if (discussion) {
-                return await this.joinDiscussion(discussion)
+                return await this.joinDiscussion(discussion, threadId)
             }
             return await this.startDiscussionFromThread(threadId, argString)
         }
@@ -86,18 +87,35 @@ export class DiscussCommand implements ISlashCommand {
         })
     }
 
-    private async joinDiscussion(discussion: IRoom): Promise<void> {
+    private async joinDiscussion(
+        discussion: IRoom,
+        threadId: string
+    ): Promise<void> {
         const updater = this.modify.getUpdater()
+        const getDiscussionUrl = async (discussion: IRoom): Promise<string> => {
+            const siteUrl = (await this.read
+                .getEnvironmentReader()
+                .getServerSettings()
+                .getValueById('Site_Url')) as string
+            const types: Record<string, string> = {
+                c: 'channel',
+                d: 'direct',
+                p: 'group'
+            }
+            return `${siteUrl.replace(/\/$/, '')}/${types[discussion.type]}/${
+                discussion.id
+            }`
+        }
         await updater.finish(
             (
                 await updater.room(discussion.id, this.commandSender)
             ).addMemberToBeAddedByUsername(this.commandSender.username)
         )
-
         await this.notify(
-            `A discussion already exists, please join [here](${await this.getDiscussionUrl(
+            `A discussion already exists, please join [here](${await getDiscussionUrl(
                 discussion
-            )}).`
+            )}).`,
+            threadId
         )
     }
     private async startDiscussion(
@@ -106,9 +124,11 @@ export class DiscussCommand implements ISlashCommand {
         users?: Array<IUser>,
         customFields?: {[K: string]: any}
     ): Promise<string | undefined> {
-        // TODO: change this
         const slugify = (str?: string): string | undefined =>
-            str?.toLowerCase().replace(/[^a-zA-Z0-9\_\-\.]/g, '')
+            str
+                ?.toLowerCase()
+                .replace(' ', '-')
+                .replace(/[^a-zA-Z0-9\_\-\.]/g, '')
 
         try {
             return await this.creator.finish(
@@ -133,14 +153,6 @@ export class DiscussCommand implements ISlashCommand {
             this.app.getLogger().error(e)
         }
         return
-    }
-
-    private async getDiscussionUrl(discussion: IRoom): Promise<string> {
-        const siteUrl = (await this.read
-            .getEnvironmentReader()
-            .getServerSettings()
-            .getValueById('Site_Url')) as string
-        return `${siteUrl.replace(/\/$/, '')}/channel/${discussion.id}`
     }
 
     private async startDiscussionFromThread(
@@ -179,35 +191,65 @@ export class DiscussCommand implements ISlashCommand {
             return
         }
 
-        // since {pmid: any} isn't working
-        // the first message in a discussion created from a thread
-        // will be by the thread creator, and the thread message
-        // but a bit fancier
-
-        await this.creator.finish(
-            this.creator
-                .startMessage()
-                .setSender(threadMessage?.sender as IUser)
-                .setRoom(
-                    (await this.read
-                        .getRoomReader()
-                        .getById(discussionId)) as IRoom
-                )
-                .setAttachments(
-                    threadMessage?.attachments || [
-                        {color: 'green', text: threadMessage?.text as string}
-                    ]
-                )
-        )
-
         const room = (await this.read
             .getRoomReader()
             .getById(discussionId)) as IRoom
+
+        /* since {pmid: any} isn't working
+         * the first message in a discussion created from a thread
+         * will be by the thread creator, and the thread message
+         * but a bit fancier */
+
+        await this.copyQuote(threadMessage as IMessage, room)
+
+        // so basically
+        // we discuss is going to add all messages as quotes to this
+        // discussion
+
+        // the RoomRead.getMessages isn't implemented :(
+        /* await this.copyQuotes(threadMessage as IMessage, room) */
 
         await this.persis.updateByAssociation(
             this.record,
             {...room, pmid: threadId},
             true
+        )
+    }
+
+    private async copyQuote(
+        threadMessage: IMessage,
+        room: IRoom
+    ): Promise<void> {
+        const siteUrl = (
+            await this.read
+                .getEnvironmentReader()
+                .getServerSettings()
+                .getValueById('Site_Url')
+        ).replace(/\/$/, '')
+        const messageRoomType =
+            threadMessage.room.type === 'c'
+                ? 'channel'
+                : threadMessage.room.type === 'p'
+                ? 'group'
+                : 'direct'
+        const messagePermalink = (id: string): string =>
+            `Main thread: ${siteUrl}/${messageRoomType}/${threadMessage.room.slugifiedName}?msg=${id}`
+
+        /* RoomRead.getMessages isn't implemented yet :( sad! */
+        /* const quotes: Array<string> = new Array()
+         * for (const msg of await this.read
+         *     .getRoomReader()
+         *     .getMessages(threadMessage.room.id)) {
+         *     if (msg.threadId !== threadMessage.id) break
+         *     quotes.push(messagePermalink(msg.id as string))
+         * } */
+
+        await this.creator.finish(
+            this.creator
+                .startMessage()
+                .setSender(threadMessage.sender)
+                .setText(messagePermalink(threadMessage.id as string))
+                .setRoom(room)
         )
     }
 
