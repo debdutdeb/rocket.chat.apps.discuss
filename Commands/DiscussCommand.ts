@@ -95,10 +95,11 @@ export class DiscussCommand implements ISlashCommand {
                 .getEnvironmentReader()
                 .getServerSettings()
                 .getValueById('Site_Url')) as string
+                RoomType
             const types: Record<string, string> = {
-                c: 'channel',
-                d: 'direct',
-                p: 'group'
+                [RoomType.CHANNEL]: 'channel',
+                [RoomType.DIRECT_MESSAGE]: 'direct',
+                [RoomType.PRIVATE_GROUP]: 'group'
             }
             return `${siteUrl.replace(/\/$/, '')}/${types[discussion.type]}/${
                 discussion.id
@@ -225,11 +226,13 @@ export class DiscussCommand implements ISlashCommand {
                 .getValueById('Site_Url')
         ).replace(/\/$/, '')
         const messageRoomType =
-            threadMessage.room.type === 'c'
+            threadMessage.room.type === RoomType.CHANNEL
                 ? 'channel'
-                : threadMessage.room.type === 'p'
+                : threadMessage.room.type === RoomType.PRIVATE_GROUP
                 ? 'group'
-                : 'direct'
+                : threadMessage.room.type === RoomType.DIRECT_MESSAGE
+                ? 'direct'
+                : ''
         const messagePermalink = (id: string): string =>
             `Main thread: ${siteUrl}/${messageRoomType}/${threadMessage.room.slugifiedName}?msg=${id}`
 
@@ -309,3 +312,4 @@ export class DiscussCommand implements ISlashCommand {
         ) as IRoom | undefined
     }
 }
+
