@@ -1,23 +1,16 @@
-import {
-    IHttp,
-    IModify,
-    IModifyCreator,
-    INotifier,
-    IPersistence,
-    IRead
-} from '@rocket.chat/apps-engine/definition/accessors'
-import {IMessage} from '@rocket.chat/apps-engine/definition/messages'
-import {
-    RocketChatAssociationModel,
-    RocketChatAssociationRecord
-} from '@rocket.chat/apps-engine/definition/metadata'
+import {IHttp, IModify, IModifyCreator, INotifier, IPersistence, IRead} from '@rocket.chat/apps-engine/definition/accessors'
+import {IMessage, IMessageAttachment} from '@rocket.chat/apps-engine/definition/messages'
+import {RocketChatAssociationModel, RocketChatAssociationRecord} from '@rocket.chat/apps-engine/definition/metadata'
 import {IRoom, RoomType} from '@rocket.chat/apps-engine/definition/rooms'
-import {
-    ISlashCommand,
-    SlashCommandContext
-} from '@rocket.chat/apps-engine/definition/slashcommands'
+import {ISlashCommand, SlashCommandContext} from '@rocket.chat/apps-engine/definition/slashcommands'
 import {IUser} from '@rocket.chat/apps-engine/definition/users'
 import {DiscussApp} from '../DiscussApp'
+
+const RoomTypeString: Record<Exclude<RoomType, RoomType.LIVE_CHAT>, 'channel' | 'direct' | 'group'> = {
+    [RoomType.CHANNEL]: 'channel',
+    [RoomType.DIRECT_MESSAGE]: 'direct',
+    [RoomType.PRIVATE_GROUP]: 'group'
+}
 
 export class DiscussCommand implements ISlashCommand {
     public command: string = 'discuss'
@@ -38,24 +31,15 @@ export class DiscussCommand implements ISlashCommand {
         this.app = app
     }
 
-    public async executor(
-        context: SlashCommandContext,
-        read: IRead,
-        modify: IModify,
-        http: IHttp,
-        persis: IPersistence
-    ): Promise<void> {
+    public async executor(context: SlashCommandContext, read: IRead, modify: IModify, http: IHttp, persis: IPersistence): Promise<void> {
         this.contextRoom = context.getRoom()
         this.commandSender = context.getSender()
-        this.modify = modify
-        this.notifier = modify.getNotifier()
-        this.creator = modify.getCreator()
-        this.persis = persis
-        this.read = read
-        this.record = new RocketChatAssociationRecord(
-            RocketChatAssociationModel.ROOM,
-            'thread-discussion-map'
-        )
+        this.modify = this.modify || modify
+        this.notifier = this.notifier || modify.getNotifier()
+        this.creator = this.creator || modify.getCreator()
+        this.persis = this.persis || persis
+        this.read = this.read || read
+        this.record = this.record || new RocketChatAssociationRecord(RocketChatAssociationModel.ROOM, 'thread-discussion-map')
 
         const threadId = context.getThreadId()
 
@@ -64,20 +48,18 @@ export class DiscussCommand implements ISlashCommand {
         if (threadId) {
             const discussion = await this.findDiscussionByThreadId(threadId)
             if (discussion) {
-                return await this.joinDiscussion(discussion, threadId)
+                return this.joinDiscussion(discussion, threadId)
             }
-            return await this.startDiscussionFromThread(threadId, argString)
+            return this.startDiscussionFromThread(threadId, argString)
         }
 
         await this.startDiscussionFromCLI(argString)
     }
 
-    private readonly isRoomDiscussion = (room: IRoom): boolean =>
-        Boolean(room.parentRoom)
+    private readonly isRoomDiscussion = (room: IRoom): boolean => Boolean(room.parentRoom)
 
-    private async notify(text: string, threadId?: string): Promise<void> {
+    private async notify(text: IMessageAttachment['text'], threadId?: IMessage['threadId']): Promise<void> {
         await this.notifier.notifyUser(this.commandSender, {
-            emoji: ':cloud:',
             sender: this.app.me,
             room: this.contextRoom,
             attachments: [{color: 'red', text}],
@@ -85,44 +67,21 @@ export class DiscussCommand implements ISlashCommand {
         })
     }
 
-    private async joinDiscussion(
-        discussion: IRoom,
-        threadId: string
-    ): Promise<void> {
+    private async joinDiscussion(discussion: IRoom, threadId: IMessage['threadId']): Promise<void> {
         const updater = this.modify.getUpdater()
-        const getDiscussionUrl = async (discussion: IRoom): Promise<string> => {
-            const siteUrl = (await this.read
-                .getEnvironmentReader()
-                .getServerSettings()
-                .getValueById('Site_Url')) as string
-                RoomType
-            const types: Record<string, string> = {
-                [RoomType.CHANNEL]: 'channel',
-                [RoomType.DIRECT_MESSAGE]: 'direct',
-                [RoomType.PRIVATE_GROUP]: 'group'
-            }
-            return `${siteUrl.replace(/\/$/, '')}/${types[discussion.type]}/${
-                discussion.id
-            }`
+
+        const updatedRoom = (await updater.room(discussion.id, this.commandSender)).addMemberToBeAddedByUsername(this.commandSender.username)
+        await updater.finish(updatedRoom)
+
+        const siteUrl = await this.read.getEnvironmentReader().getServerSettings().getValueById('Site_Url')
+        let discussionUrlOrSlug = discussion.slugifiedName
+        if (siteUrl) {
+            discussionUrlOrSlug = `${siteUrl.replace(/\/$/, '')}/${RoomTypeString[discussion.type]}/${discussion.id}`
         }
-        await updater.finish(
-            (
-                await updater.room(discussion.id, this.commandSender)
-            ).addMemberToBeAddedByUsername(this.commandSender.username)
-        )
-        await this.notify(
-            `A discussion already exists, please join [here](${await getDiscussionUrl(
-                discussion
-            )}).`,
-            threadId
-        )
+
+        await this.notify(`A discussion already exists, please join [here](${discussionUrlOrSlug}).`, threadId)
     }
-    private async startDiscussion(
-        displayName: string,
-        parentRoom: IRoom,
-        users?: Array<IUser>,
-        customFields?: {[K: string]: any}
-    ): Promise<string | undefined> {
+    private async startDiscussion(displayName: IRoom['displayName'], parentRoom: IRoom, users?: Array<IUser>, customFields?: {[K: string]: any}): Promise<string | undefined> {
         const slugify = (str?: string): string | undefined =>
             str
                 ?.toLowerCase()
@@ -130,7 +89,7 @@ export class DiscussCommand implements ISlashCommand {
                 .replace(/[^a-zA-Z0-9\_\-\.]/g, '')
 
         try {
-            return await this.creator.finish(
+            return this.creator.finish(
                 this.creator
                     .startDiscussion({
                         creator: this.commandSender,
@@ -140,9 +99,7 @@ export class DiscussCommand implements ISlashCommand {
                         type: RoomType.CHANNEL,
                         customFields
                     })
-                    .setMembersToBeAddedByUsernames(
-                        users?.map((user: IUser): string => user.username) || []
-                    )
+                    .setMembersToBeAddedByUsernames(users?.map((user: IUser): string => user.username) || [])
             )
         } catch (e) {
             if (e.error === 'error-action-not-allowed') {
@@ -154,34 +111,21 @@ export class DiscussCommand implements ISlashCommand {
         return
     }
 
-    private async startDiscussionFromThread(
-        threadId: string,
-        discussionName?: string
-    ): Promise<void> {
+    private async startDiscussionFromThread(threadId: NonNullable<IMessage['threadId']>, discussionName?: IRoom['displayName']): Promise<void> {
         if (this.isRoomDiscussion(this.contextRoom)) {
-            return await this.notify(
-                // tslint:disable-next-line: quotemark
-                "this room isn't public channel or private group, either pass a `#RoomName` or execute `/discuss` in a different room"
-            )
+            return this.notify("this room isn't public channel or private group, either pass a `#RoomName` or execute `/discuss` in a different room")
         }
 
-        const threadMessage = await this.read
-            .getMessageReader()
-            .getById(threadId)
+        const threadMessage = await this.read.getMessageReader().getById(threadId)
 
         if (!threadMessage?.text && !discussionName) {
-            return await this.notify(
-                'no thread message text found to use as discussion name, please provide one',
-                threadId
-            )
+            return await this.notify('no thread message text found to use as discussion name, please provide one', threadId)
         }
 
         const discussionId = await this.startDiscussion(
             discussionName || (threadMessage?.text as string),
             this.contextRoom,
-            threadMessage?.sender.id === this.commandSender.id
-                ? []
-                : [threadMessage?.sender as IUser],
+            threadMessage?.sender.id === this.commandSender.id ? [] : [threadMessage?.sender as IUser],
             // expected this to work, but isn't, leaving it here so that I can be sad about it
             {pmid: threadId}
         )
@@ -190,9 +134,7 @@ export class DiscussCommand implements ISlashCommand {
             return
         }
 
-        const room = (await this.read
-            .getRoomReader()
-            .getById(discussionId)) as IRoom
+        const room = (await this.read.getRoomReader().getById(discussionId)) as IRoom
 
         /* since {pmid: any} isn't working
          * the first message in a discussion created from a thread
@@ -208,33 +150,14 @@ export class DiscussCommand implements ISlashCommand {
         // the RoomRead.getMessages isn't implemented :(
         /* await this.copyQuotes(threadMessage as IMessage, room) */
 
-        await this.persis.updateByAssociation(
-            this.record,
-            {...room, pmid: threadId},
-            true
-        )
+        await this.persis.updateByAssociation(this.record, {...room, pmid: threadId}, true)
     }
 
-    private async copyQuote(
-        threadMessage: IMessage,
-        room: IRoom
-    ): Promise<void> {
-        const siteUrl = (
-            await this.read
-                .getEnvironmentReader()
-                .getServerSettings()
-                .getValueById('Site_Url')
-        ).replace(/\/$/, '')
-        const messageRoomType =
-            threadMessage.room.type === RoomType.CHANNEL
-                ? 'channel'
-                : threadMessage.room.type === RoomType.PRIVATE_GROUP
-                ? 'group'
-                : threadMessage.room.type === RoomType.DIRECT_MESSAGE
-                ? 'direct'
-                : ''
-        const messagePermalink = (id: string): string =>
-            `Main thread: ${siteUrl}/${messageRoomType}/${threadMessage.room.slugifiedName}?msg=${id}`
+    private async copyQuote(threadMessage: IMessage, room: IRoom): Promise<void> {
+        const siteUrl = (await this.read.getEnvironmentReader().getServerSettings().getValueById('Site_Url')).replace(/\/$/, '')
+        const messageRoomType = RoomTypeString[threadMessage.room.type]
+
+        const messagePermalink = (id: NonNullable<IMessage['id']>): string => `Main thread: ${siteUrl}/${messageRoomType}/${threadMessage.room.slugifiedName}?msg=${id}`
 
         /* RoomRead.getMessages isn't implemented yet :( sad! */
         /* const quotes: Array<string> = new Array()
@@ -261,55 +184,42 @@ export class DiscussCommand implements ISlashCommand {
 
     private async startDiscussionFromCLI(argString: string): Promise<void> {
         // it'll never return null since all regex matches are optional
-        const [, , roomName, discussionName]: Array<string> =
-            /(^#([^\s]+)\s*)?(.+)?$/.exec(argString) as RegExpExecArray
+        const [, , roomName, discussionName]: Array<string> = /(^#([^\s]+)\s*)?(.+)?$/.exec(argString) as RegExpExecArray
 
         if (!discussionName) {
             return await this.notify('you must provide a discussion name')
         }
 
-        const room = roomName
-            ? await this.read.getRoomReader().getByName(roomName)
-            : this.contextRoom
+        const room = roomName ? await this.read.getRoomReader().getByName(roomName) : this.contextRoom
         if (!room) {
-            return await this.notify(`room \`${roomName}\` not found`)
+            return this.notify(`room \`${roomName}\` not found`)
         }
 
         if (!(await this.isSenderMember(room))) {
-            return await this.notify(
-                'You are not a member of said room: ' + room.displayName
-            )
+            return this.notify('You are not a member of said room: ' + room.displayName)
         }
 
         if (this.isRoomDiscussion(room)) {
-            return await this.notify(
-                `${
-                    /* means this room is where command's been run */
-                    room.id === this.contextRoom.id
-                        ? 'this room'
-                        : `\`${room.displayName ?? room.slugifiedName}\``
-                } isn't a public channel or private group, either pass a different \`#RoomName\` or execute \`/discuss\` in another room `
+            return this.notify(
+                '`' +
+                    (room.displayName || room.slugifiedName) +
+                    '`' +
+                    ' is not a public channel or private group, either pass a different `#RoomName` or execute `/discuss` in another room'
             )
         }
 
         await this.startDiscussion(discussionName, room)
     }
 
-    private async findDiscussionByThreadId(
-        threadId: string
-    ): Promise<IRoom | undefined> {
-        const data = await this.read
-            .getPersistenceReader()
-            .readByAssociation(this.record)
+    private async findDiscussionByThreadId(threadId: NonNullable<IMessage['threadId']>): Promise<IRoom | undefined> {
+        const data = await this.read.getPersistenceReader().readByAssociation(this.record)
 
         /**
          * pmid is actually a property of the room::discussion model
          * just not yet available in apps-engine
          * so doing it this way
          */
-        return data.find(
-            room => (room as IRoom & {pmid: string}).pmid === threadId
-        ) as IRoom | undefined
+        return data.find(room => (room as IRoom & {pmid: IMessage['id']}).pmid === threadId) as IRoom | undefined
     }
 }
 
